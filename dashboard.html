@@ -1,0 +1,330 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KPI Parc Conteneurs — MARSA / TCC</title>
+<style>
+  :root{
+    --bg:#0f1720; --panel:#16212c; --panel2:#1c2a37; --ink:#e8eef4; --muted:#93a4b3;
+    --line:#26343f; --accent:#2bb3a3; --navy:#3a6ea5;
+    --c1:#3a6ea5; --c2:#2bb3a3; --c3:#7a5cc0; --c4:#c9822e; --c5:#c14b52; --c6:#4a9c56;
+    --ok:#4a9c56; --warn:#c9822e; --bad:#c14b52; --track:#233241;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;font-size:14px}
+  header{background:linear-gradient(90deg,#12314f,#0f1720);padding:14px 20px;border-bottom:1px solid var(--line);
+    display:flex;flex-wrap:wrap;align-items:center;gap:14px;position:sticky;top:0;z-index:10}
+  header h1{font-size:17px;margin:0;font-weight:700;letter-spacing:.2px}
+  header .sub{color:var(--muted);font-size:12px}
+  .src{margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  input,select,button{font:inherit;color:var(--ink);background:var(--panel2);border:1px solid var(--line);
+    border-radius:7px;padding:7px 9px}
+  input[type=text]{min-width:230px}
+  button{cursor:pointer;background:var(--accent);color:#04211d;border:none;font-weight:700}
+  button.ghost{background:var(--panel2);color:var(--ink);border:1px solid var(--line);font-weight:600}
+  button:hover{filter:brightness(1.08)}
+  .wrap{padding:16px 20px 60px;max-width:1400px;margin:0 auto}
+  .status{font-size:12px;color:var(--muted);margin:6px 0 14px}
+  .status b{color:var(--ink)}
+  .filters{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;
+    background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:16px}
+  .filters label{display:block;font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.04em}
+  .filters .f{display:flex;flex-direction:column}
+  .filters select,.filters input{width:100%}
+  .reset{grid-column:1/-1;display:flex;justify-content:flex-end}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fill,minmax(135px,1fr));gap:10px;margin-bottom:18px}
+  .kpi{background:var(--panel);border:1px solid var(--line);border-radius:11px;padding:12px 13px;position:relative;overflow:hidden}
+  .kpi .lab{font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+  .kpi .val{font-size:25px;font-weight:800;margin-top:3px;font-variant-numeric:tabular-nums}
+  .kpi .sub{font-size:11px;color:var(--muted);margin-top:2px}
+  .kpi .stripe{position:absolute;left:0;top:0;bottom:0;width:4px}
+  .grid{display:grid;grid-template-columns:repeat(2,1fr);gap:16px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+  .card h3{margin:0 0 10px;font-size:13px;font-weight:700}
+  .card h3 span{color:var(--muted);font-weight:500;font-size:11px}
+  canvas{width:100%;display:block}
+  @media(max-width:900px){.grid{grid-template-columns:1fr}}
+  .full{grid-column:1/-1}
+  .empty{color:var(--muted);text-align:center;padding:50px 0}
+  .legend{display:flex;flex-wrap:wrap;gap:10px;margin-top:8px;font-size:11px;color:var(--muted)}
+  .legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:middle}
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>KPI Parc Conteneurs</h1>
+    <div class="sub">MARSA / MACAS / TCC — données Navis N4 en direct</div>
+  </div>
+  <div class="src">
+    <input type="text" id="apiUrl" value="http://SERVEUR:PORT/apex/api/query?filtername=units_1&operatorId=OPERATEUR&complexId=COMPLEXE&facilityId=TERMINAL&yardId=PARC">
+    <button id="btnLoad">Charger via API</button>
+    <button class="ghost" id="btnFile">ou fichier XML…</button>
+    <input type="file" id="fileInput" accept=".xml" style="display:none">
+  </div>
+</header>
+
+<div class="wrap">
+  <div class="status" id="status">Prêt. Clique « Charger via API » (réseau du terminal requis), ou charge le fichier <b>response.xml</b>.</div>
+
+  <div class="filters" id="filters" style="display:none"></div>
+  <div class="kpis" id="kpis"></div>
+  <div class="grid" id="charts"></div>
+  <div class="empty" id="emptyMsg">Aucune donnée chargée.</div>
+</div>
+
+<script>
+"use strict";
+var COLORS = ['#3a6ea5','#2bb3a3','#7a5cc0','#c9822e','#c14b52','#4a9c56','#4a90c0','#b0567a','#8a8f3a','#5c9ea0'];
+var STATE = { cols:[], idx:{}, rows:[], filtered:[] };
+
+/* ---------- chargement ---------- */
+function setStatus(html){ document.getElementById('status').innerHTML = html; }
+
+document.getElementById('btnLoad').onclick = function(){
+  var url = document.getElementById('apiUrl').value.trim();
+  setStatus('Appel de l’API…');
+  fetch(url, { credentials:'include' })
+    .then(function(r){ if(!r.ok) throw new Error('HTTP '+r.status); return r.text(); })
+    .then(function(t){ parseXML(t); setStatus('Chargé via API : <b>'+STATE.rows.length+'</b> conteneurs.'); })
+    .catch(function(e){
+      setStatus('❌ API injoignable ('+e.message+'). Cause probable : CORS ou réseau. '+
+        'Solution : ouvre l’URL dans un onglet, enregistre le XML, puis clique « ou fichier XML… ».');
+    });
+};
+document.getElementById('btnFile').onclick = function(){ document.getElementById('fileInput').click(); };
+document.getElementById('fileInput').onchange = function(e){
+  var f = e.target.files[0]; if(!f) return;
+  setStatus('Lecture du fichier…');
+  var rd = new FileReader();
+  rd.onload = function(){ parseXML(rd.result); setStatus('Chargé depuis le fichier : <b>'+STATE.rows.length+'</b> conteneurs.'); };
+  rd.readAsText(f);
+};
+
+function parseXML(text){
+  var doc = new DOMParser().parseFromString(text, 'application/xml');
+  var cols = [].map.call(doc.querySelectorAll('columns > column'), function(c){ return (c.textContent||'').trim(); });
+  var rows = [].map.call(doc.querySelectorAll('rows > row'), function(r){
+    return [].map.call(r.querySelectorAll('field'), function(f){ return (f.textContent||'').trim(); });
+  });
+  STATE.cols = cols;
+  STATE.idx = {}; cols.forEach(function(c,i){ STATE.idx[c]=i; });
+  STATE.rows = rows;
+  buildFilters();
+  applyFilters();
+}
+function ci(name){ return STATE.idx[name] != null ? STATE.idx[name] : -1; }
+function val(row, name){ var j=ci(name); return j>=0 && j<row.length ? row[j] : ''; }
+
+/* ---------- filtres ---------- */
+var FILTER_DEFS = [
+  {key:'Category', label:'Catégorie'},
+  {key:'Frght Kind', label:'Plein / Vide'},
+  {key:'Line Op', label:'Armateur'},
+  {key:'V-State', label:'État visite'},
+  {key:'T-State', label:'État transit'},
+  {key:'POD', label:'POD'},
+  {key:'Reqs Power', label:'Reefer'},
+  {key:'Hazardous?', label:'Dangereux'},
+  {key:'Is OOG', label:'Hors gabarit'},
+  {key:'Stop-Vsl', label:'Bloqué navire'},
+];
+var activeFilters = {};
+
+function buildFilters(){
+  var box = document.getElementById('filters');
+  box.style.display = 'grid';
+  box.innerHTML = '';
+  activeFilters = {};
+  FILTER_DEFS.forEach(function(def){
+    if(ci(def.key) < 0) return;
+    var vals = {};
+    STATE.rows.forEach(function(r){ var v=val(r,def.key); vals[v==''?'(vide)':v]=(vals[v==''?'(vide)':v]||0)+1; });
+    var opts = Object.keys(vals).sort(function(a,b){ return vals[b]-vals[a]; });
+    var f = document.createElement('div'); f.className='f';
+    var lab = document.createElement('label'); lab.textContent = def.label; f.appendChild(lab);
+    var sel = document.createElement('select');
+    sel.innerHTML = '<option value="">Tous ('+STATE.rows.length+')</option>' +
+      opts.slice(0,60).map(function(o){ return '<option value="'+encodeURIComponent(o)+'">'+o+' ('+vals[o]+')</option>'; }).join('');
+    sel.onchange = function(){ if(sel.value) activeFilters[def.key]=decodeURIComponent(sel.value); else delete activeFilters[def.key]; applyFilters(); };
+    f.appendChild(sel); box.appendChild(f);
+  });
+  // dwell range
+  if(ci('Dwell')>=0){
+    var f2=document.createElement('div'); f2.className='f';
+    f2.innerHTML='<label>Dwell min</label>';
+    var mi=document.createElement('input'); mi.type='number'; mi.placeholder='0';
+    mi.oninput=function(){ activeFilters._dwellMin = mi.value!==''?parseFloat(mi.value):null; applyFilters(); };
+    f2.appendChild(mi); box.appendChild(f2);
+  }
+  // search
+  var f3=document.createElement('div'); f3.className='f';
+  f3.innerHTML='<label>Recherche N° conteneur</label>';
+  var s=document.createElement('input'); s.type='text'; s.placeholder='ex. MSCU…';
+  s.oninput=function(){ activeFilters._search = s.value.trim().toUpperCase(); applyFilters(); };
+  f3.appendChild(s); box.appendChild(f3);
+
+  var reset=document.createElement('div'); reset.className='reset';
+  var b=document.createElement('button'); b.className='ghost'; b.textContent='Réinitialiser les filtres';
+  b.onclick=function(){ box.querySelectorAll('select').forEach(function(x){x.value='';}); box.querySelectorAll('input').forEach(function(x){x.value='';}); activeFilters={}; applyFilters(); };
+  reset.appendChild(b); box.appendChild(reset);
+}
+
+function applyFilters(){
+  var jDwell=ci('Dwell'), jUnit=ci('Unit Nbr');
+  STATE.filtered = STATE.rows.filter(function(r){
+    for(var k in activeFilters){
+      if(k[0]==='_') continue;
+      var want=activeFilters[k]; var got=val(r,k); if(got==='') got='(vide)';
+      if(got!==want) return false;
+    }
+    if(activeFilters._dwellMin!=null && jDwell>=0){ var d=parseFloat(r[jDwell]); if(isNaN(d)||d<activeFilters._dwellMin) return false; }
+    if(activeFilters._search && jUnit>=0){ if((r[jUnit]||'').toUpperCase().indexOf(activeFilters._search)<0) return false; }
+    return true;
+  });
+  document.getElementById('emptyMsg').style.display = STATE.filtered.length? 'none':'block';
+  render();
+}
+
+/* ---------- agrégations ---------- */
+function countBy(name, top){
+  var j=ci(name); var m={};
+  STATE.filtered.forEach(function(r){ var v=(j>=0&&j<r.length?r[j]:'')||'(vide)'; m[v]=(m[v]||0)+1; });
+  var arr=Object.keys(m).map(function(k){return {label:k,value:m[k]};}).sort(function(a,b){return b.value-a.value;});
+  return top?arr.slice(0,top):arr;
+}
+function countTrue(name){ var j=ci(name); var n=0; STATE.filtered.forEach(function(r){ if(j>=0 && (r[j]||'').toLowerCase()==='true') n++; }); return n; }
+function dwellStats(){
+  var j=ci('Dwell'); if(j<0) return null; var v=[];
+  STATE.filtered.forEach(function(r){ var x=parseFloat(r[j]); if(!isNaN(x)) v.push(x); });
+  if(!v.length) return null; v.sort(function(a,b){return a-b;});
+  return { n:v.length, med:v[v.length>>1], p90:v[Math.floor(v.length*0.9)], max:v[v.length-1],
+           avg:v.reduce(function(a,b){return a+b;},0)/v.length, arr:v };
+}
+
+/* ---------- rendu ---------- */
+function render(){
+  renderKPIs();
+  renderCharts();
+}
+function kpi(lab,val,sub,color){
+  return '<div class="kpi"><div class="stripe" style="background:'+color+'"></div>'+
+    '<div class="lab">'+lab+'</div><div class="val">'+val+'</div>'+(sub?'<div class="sub">'+sub+'</div>':'')+'</div>';
+}
+function pct(n,d){ return d? Math.round(n*100/d)+' %':'—'; }
+function renderKPIs(){
+  var f=STATE.filtered, n=f.length;
+  var cat=countBy('Category'); var byCat={}; cat.forEach(function(c){byCat[c.label]=c.value;});
+  var fk=countBy('Frght Kind'); var full=0,empty=0; fk.forEach(function(c){ if(c.label==='FCL'||c.label==='Full')full=c.value; if(c.label==='Empty')empty=c.value;});
+  var ds=dwellStats();
+  var aging = 0, jD=ci('Dwell'); if(jD>=0) f.forEach(function(r){ if(parseFloat(r[jD])>120) aging++; });
+  var html='';
+  html+=kpi('Conteneurs', n.toLocaleString('fr'), 'périmètre filtré', '#3a6ea5');
+  html+=kpi('Import', (byCat['Import']||0).toLocaleString('fr'), pct(byCat['Import']||0,n), '#4a90c0');
+  html+=kpi('Export', (byCat['Export']||0).toLocaleString('fr'), pct(byCat['Export']||0,n), '#2bb3a3');
+  html+=kpi('En parc (Storage)', (byCat['Storage']||0).toLocaleString('fr'), pct(byCat['Storage']||0,n), '#7a5cc0');
+  html+=kpi('Plein', full.toLocaleString('fr'), pct(full,n), '#4a9c56');
+  html+=kpi('Vide', empty.toLocaleString('fr'), pct(empty,n), '#c9822e');
+  html+=kpi('Reefers', countTrue('Reqs Power').toLocaleString('fr'), 'branchement requis', '#2bb3a3');
+  html+=kpi('Dangereux', countTrue('Hazardous?').toLocaleString('fr'), 'IMDG', '#c14b52');
+  html+=kpi('Hors gabarit', countTrue('Is OOG').toLocaleString('fr'), 'OOG', '#c9822e');
+  html+=kpi('Bloqués navire', countTrue('Stop-Vsl').toLocaleString('fr'), 'stop vessel', '#c14b52');
+  if(ds){
+    html+=kpi('Dwell médian', Math.round(ds.med), 'p90 '+Math.round(ds.p90)+' · max '+Math.round(ds.max), '#3a6ea5');
+    html+=kpi('Aging > 120', aging.toLocaleString('fr'), pct(aging,n)+' du parc', '#c14b52');
+  }
+  document.getElementById('kpis').innerHTML=html;
+}
+
+function card(title,sub,id){ return '<div class="card"><h3>'+title+(sub?' <span>'+sub+'</span>':'')+'</h3><canvas id="'+id+'"></canvas></div>'; }
+function renderCharts(){
+  var c=document.getElementById('charts');
+  c.innerHTML =
+    card('Répartition par catégorie','','ch_cat')+
+    card('Top 10 armateurs','par nombre de conteneurs','ch_line')+
+    card('Plein vs Vide','','ch_fk')+
+    card('Top 10 ports de déchargement','POD','ch_pod')+
+    '<div class="card full"><h3>Distribution du temps de séjour (Dwell) <span>tranches</span></h3><canvas id="ch_dwell"></canvas></div>'+
+    card('État de transit','T-State','ch_ts')+
+    card('Type ISO (groupe)','','ch_iso');
+
+  hbar('ch_cat', countBy('Category'));
+  hbar('ch_line', countBy('Line Op',10));
+  donut('ch_fk', countBy('Frght Kind'));
+  hbar('ch_pod', countBy('POD',10));
+  dwellHisto('ch_dwell');
+  hbar('ch_ts', countBy('T-State'));
+  hbar('ch_iso', countBy('ISO Grp',8));
+}
+
+/* ---------- charts canvas ---------- */
+function setup(id,h){
+  var cv=document.getElementById(id); if(!cv) return null;
+  var dpr=window.devicePixelRatio||1; var w=cv.clientWidth||600;
+  cv.width=w*dpr; cv.height=h*dpr; cv.style.height=h+'px';
+  var x=cv.getContext('2d'); x.scale(dpr,dpr); x.clearRect(0,0,w,h);
+  return {x:x,w:w,h:h};
+}
+function hbar(id,data){
+  var rowsH=Math.max(24, data.length? 260/data.length:24);
+  var H=Math.max(120, data.length*Math.min(rowsH,30)+20);
+  var s=setup(id,H); if(!s) return; var x=s.x,w=s.w;
+  var max=Math.max.apply(null,data.map(function(d){return d.value;}).concat([1]));
+  var labelW=Math.min(150, Math.max.apply(null,data.map(function(d){return d.label.length;}))*6.2+10);
+  var bx=labelW+6, bw=w-bx-58, bh=Math.min(22,(H-16)/data.length-6);
+  x.font='12px -apple-system,Segoe UI,Arial'; x.textBaseline='middle';
+  data.forEach(function(d,i){
+    var y=10+i*((H-16)/data.length)+((H-16)/data.length-bh)/2;
+    x.fillStyle='#93a4b3'; x.textAlign='right'; x.fillText(d.label.length>24?d.label.slice(0,23)+'…':d.label, labelW, y+bh/2);
+    x.fillStyle='#233241'; x.fillRect(bx,y,bw,bh);
+    x.fillStyle=COLORS[i%COLORS.length]; x.fillRect(bx,y,Math.max(2,bw*d.value/max),bh);
+    x.fillStyle='#e8eef4'; x.textAlign='left'; x.fillText(d.value.toLocaleString('fr'), bx+bw+6, y+bh/2);
+  });
+}
+function donut(id,data){
+  var H=220; var s=setup(id,H); if(!s) return; var x=s.x,w=s.w;
+  var total=data.reduce(function(a,b){return a+b.value;},0)||1;
+  var cx=w/2, cy=H/2, r=Math.min(w,H)/2-14, ir=r*0.58, a=-Math.PI/2;
+  data.forEach(function(d,i){
+    var ang=d.value/total*Math.PI*2;
+    x.beginPath(); x.moveTo(cx,cy); x.fillStyle=COLORS[i%COLORS.length];
+    x.arc(cx,cy,r,a,a+ang); x.closePath(); x.fill(); a+=ang;
+  });
+  x.fillStyle='#16212c'; x.beginPath(); x.arc(cx,cy,ir,0,Math.PI*2); x.fill();
+  x.fillStyle='#e8eef4'; x.textAlign='center'; x.textBaseline='middle'; x.font='700 20px Arial';
+  x.fillText(total.toLocaleString('fr'), cx, cy-6);
+  x.fillStyle='#93a4b3'; x.font='11px Arial'; x.fillText('total', cx, cy+12);
+  // legend
+  var ly=8; x.textAlign='left'; x.textBaseline='top';
+  data.forEach(function(d,i){
+    x.fillStyle=COLORS[i%COLORS.length]; x.fillRect(8,ly,10,10);
+    x.fillStyle='#c9d5df'; x.font='11px Arial';
+    x.fillText(d.label+' — '+Math.round(d.value*100/total)+'%', 22, ly);
+    ly+=16;
+  });
+}
+function dwellHisto(id){
+  var ds=dwellStats(); var H=200; var s=setup(id,H); if(!s){return;} var x=s.x,w=s.w;
+  if(!ds){ x.fillStyle='#93a4b3'; x.fillText('Dwell indisponible',10,20); return; }
+  var edges=[0,6,12,24,48,72,120,168,240,360,999999];
+  var labels=['<6','6-12','12-24','1-2j','2-3j','3-5j','5-7j','7-10j','10-15j','>15j'];
+  var buckets=edges.slice(0,-1).map(function(){return 0;});
+  ds.arr.forEach(function(v){ for(var i=0;i<edges.length-1;i++){ if(v>=edges[i]&&v<edges[i+1]){buckets[i]++;break;} } });
+  var max=Math.max.apply(null,buckets.concat([1]));
+  var pad=30, bw=(w-pad*2)/buckets.length, base=H-28;
+  x.font='11px Arial'; x.textAlign='center';
+  buckets.forEach(function(v,i){
+    var bh=(base-14)*v/max, bx=pad+i*bw;
+    x.fillStyle=COLORS[i%COLORS.length]; x.fillRect(bx+4,base-bh,bw-8,bh);
+    x.fillStyle='#c9d5df'; x.textBaseline='bottom'; x.fillText(v?v.toLocaleString('fr'):'', bx+bw/2, base-bh-2);
+    x.fillStyle='#93a4b3'; x.textBaseline='top'; x.fillText(labels[i], bx+bw/2, base+4);
+  });
+  x.fillStyle='#93a4b3'; x.textAlign='left'; x.textBaseline='top';
+  x.fillText('médiane '+Math.round(ds.med)+' · moyenne '+Math.round(ds.avg)+' · p90 '+Math.round(ds.p90), pad, 4);
+}
+window.addEventListener('resize', function(){ if(STATE.filtered.length) renderCharts(); });
+</script>
+</body>
+</html>

@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KPI Parc Conteneurs — MARSA / TCC</title>
+<style>
+  :root{--bg:#0f1720;--panel:#16212c;--panel2:#1c2a37;--ink:#e8eef4;--muted:#93a4b3;--line:#26343f;--accent:#2bb3a3;--track:#233241;}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;font-size:14px}
+  header{background:linear-gradient(90deg,#12314f,#0f1720);padding:13px 20px;border-bottom:1px solid var(--line);display:flex;flex-wrap:wrap;align-items:center;gap:14px;position:sticky;top:0;z-index:10}
+  header h1{font-size:17px;margin:0;font-weight:700}
+  header .sub{color:var(--muted);font-size:12px}
+  .src{margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  input,select,button{font:inherit;color:var(--ink);background:var(--panel2);border:1px solid var(--line);border-radius:7px;padding:6px 9px}
+  button{cursor:pointer;background:var(--accent);color:#04211d;border:none;font-weight:700}
+  button.ghost{background:var(--panel2);color:var(--ink);border:1px solid var(--line);font-weight:600}
+  button:hover{filter:brightness(1.08)}
+  .wrap{padding:16px 20px 60px;max-width:1400px;margin:0 auto}
+  .status{font-size:12px;color:var(--muted);margin:6px 0 12px}
+  .status b{color:var(--ink)}
+  .filters{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:13px;margin-bottom:16px}
+  .filters .f{display:flex;flex-direction:column}
+  .filters label{font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.04em}
+  .filters select,.filters input{width:100%}
+  .quick{grid-column:1/-1;display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+  .quick span{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+  .quick .sp{margin-left:auto}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px;margin-bottom:18px}
+  .kpi{background:var(--panel);border:1px solid var(--line);border-radius:11px;padding:11px 12px;position:relative;overflow:hidden}
+  .kpi .lab{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+  .kpi .val{font-size:24px;font-weight:800;margin-top:3px;font-variant-numeric:tabular-nums}
+  .kpi .sub{font-size:11px;color:var(--muted);margin-top:2px}
+  .kpi .stripe{position:absolute;left:0;top:0;bottom:0;width:4px}
+  .grid{display:grid;grid-template-columns:repeat(2,1fr);gap:16px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+  .card h3{margin:0 0 10px;font-size:13px;font-weight:700}
+  .card h3 span{color:var(--muted);font-weight:500;font-size:11px}
+  canvas{width:100%;display:block}
+  .full{grid-column:1/-1}
+  @media(max-width:900px){.grid{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header>
+  <div><h1>KPI Parc Conteneurs</h1><div class="sub">MARSA / MACAS / TCC — Navis N4</div></div>
+  <div class="src"><span class="sub" id="srcinfo">—</span><button id="btnRefresh">Rafraichir depuis l'API</button></div>
+</header>
+<div class="wrap">
+  <div class="status" id="status">Chargement…</div>
+  <div class="filters" id="filters" style="display:none"></div>
+  <div class="kpis" id="kpis"></div>
+  <div class="grid" id="charts"></div>
+</div>
+<script>
+"use strict";
+var COLORS=['#3a6ea5','#2bb3a3','#7a5cc0','#c9822e','#c14b52','#4a9c56','#4a90c0','#b0567a','#8a8f3a','#5c9ea0'];
+var META=null, CTRL={}, TIMER=null;
+function $(id){return document.getElementById(id);}
+function setStatus(h){ $('status').innerHTML=h; }
+
+/* ---------- init : on charge seulement les METADONNEES (petit) ---------- */
+fetch('/api/meta').then(function(r){return r.json();}).then(function(m){
+  META=m;
+  $('srcinfo').textContent='Source : '+m.source+' · '+m.total.toLocaleString('fr')+' conteneurs';
+  if(!m.total){ setStatus('Aucune donnée. Clique « Rafraichir depuis l\'API ».'); return; }
+  buildFilters(m); requestStats();
+}).catch(function(e){ setStatus('Erreur /api/meta : '+e.message); });
+
+$('btnRefresh').onclick=function(){
+  setStatus('Appel de l’API en cours… (peut prendre 1-2 min)');
+  fetch('/api/refresh').then(function(r){return r.json();}).then(function(d){
+    if(d.ok){ location.reload(); } else { setStatus('❌ API : '+d.error); }
+  }).catch(function(e){ setStatus('Erreur : '+e.message); });
+};
+
+/* ---------- construction des filtres depuis META ---------- */
+var CAT_LABELS={'Category':'Catégorie','Frght Kind':'Plein / Vide','Line Op':'Armateur','V-State':'État visite','T-State':'État transit','POD':'POD','Reqs Power':'Reefer','Hazardous?':'Dangereux','Is OOG':'Hors gabarit','Stop-Vsl':'Bloqué navire'};
+function buildFilters(m){
+  var box=$('filters'); box.style.display='grid'; box.innerHTML=''; CTRL={};
+  // periode
+  var fd=cell(box,'Colonne date'); var dc=document.createElement('select');
+  m.dateCols.forEach(function(o){ dc.innerHTML+='<option>'+o+'</option>'; }); fd.appendChild(dc);
+  var f1=cell(box,'Du'); var din=document.createElement('input'); din.type='date'; f1.appendChild(din);
+  var f2=cell(box,'Au'); var dou=document.createElement('input'); dou.type='date'; f2.appendChild(dou);
+  CTRL.datecol=dc; CTRL.from=din; CTRL.to=dou;
+  dc.onchange=din.onchange=dou.onchange=schedule;
+  // categoriels
+  CTRL.cat={};
+  Object.keys(CAT_LABELS).forEach(function(k){
+    if(!m.options[k]) return;
+    var f=cell(box,CAT_LABELS[k]); var sel=document.createElement('select');
+    sel.innerHTML='<option value="">Tous</option>'+m.options[k].map(function(p){return '<option value="'+enc(p[0])+'">'+p[0]+' ('+p[1]+')</option>';}).join('');
+    sel.onchange=schedule; f.appendChild(sel); CTRL.cat[k]=sel;
+  });
+  // dwell + recherche
+  if(m.hasDwell){ var fm=cell(box,'Dwell min (jours)'); var mi=document.createElement('input'); mi.type='number'; mi.placeholder='0'; mi.oninput=schedule; fm.appendChild(mi); CTRL.dwellMin=mi; }
+  var fs=cell(box,'N° conteneur'); var s=document.createElement('input'); s.type='text'; s.placeholder='MSCU…'; s.oninput=schedule; fs.appendChild(s); CTRL.search=s;
+  // raccourcis
+  var q=document.createElement('div'); q.className='quick'; q.innerHTML='<span>Période rapide :</span>';
+  [['Tout',null],['30 j',30],['90 j',90],['180 j',180],['1 an',365]].forEach(function(p){
+    var b=document.createElement('button'); b.className='ghost'; b.textContent=p[0];
+    b.onclick=function(){ if(p[1]==null){din.value='';dou.value='';} else {var t=new Date();dou.value=iso(t);din.value=iso(new Date(t-p[1]*864e5));} requestStats(); };
+    q.appendChild(b);
+  });
+  var rb=document.createElement('button'); rb.className='ghost sp'; rb.textContent='Réinitialiser tout';
+  rb.onclick=function(){ buildFilters(META); requestStats(); }; q.appendChild(rb);
+  box.appendChild(q);
+}
+function cell(box,label){ var f=document.createElement('div'); f.className='f'; f.innerHTML='<label>'+label+'</label>'; box.appendChild(f); return f; }
+function enc(s){ return s.replace(/"/g,'&quot;'); }
+function iso(d){ return new Date(d).toISOString().slice(0,10); }
+
+/* ---------- LE FILTRE PILOTE LA REQUETE ---------- */
+function schedule(){ clearTimeout(TIMER); TIMER=setTimeout(requestStats,250); }
+function requestStats(){
+  if(!META) return;
+  var p=new URLSearchParams();
+  p.set('datecol', CTRL.datecol.value);
+  if(CTRL.from.value) p.set('from', CTRL.from.value);
+  if(CTRL.to.value) p.set('to', CTRL.to.value);
+  Object.keys(CTRL.cat).forEach(function(k){ var v=CTRL.cat[k].value; if(v) p.set(k, v); });
+  if(CTRL.dwellMin && CTRL.dwellMin.value!=='') p.set('dwellMin', CTRL.dwellMin.value);
+  if(CTRL.search && CTRL.search.value.trim()) p.set('search', CTRL.search.value.trim());
+  setStatus('Calcul côté serveur…');
+  fetch('/api/stats?'+p.toString()).then(function(r){return r.json();}).then(function(st){
+    render(st);
+    setStatus('<b>'+st.total.toLocaleString('fr')+'</b> conteneurs dans le périmètre filtré.');
+  }).catch(function(e){ setStatus('Erreur /api/stats : '+e.message); });
+}
+
+/* ---------- rendu (a partir des AGREGATS renvoyes par le serveur) ---------- */
+function kpi(l,v,s,c){ return '<div class="kpi"><div class="stripe" style="background:'+c+'"></div><div class="lab">'+l+'</div><div class="val">'+v+'</div>'+(s?'<div class="sub">'+s+'</div>':'')+'</div>'; }
+function pct(x,n){ return n?Math.round(x*100/n)+' %':'—'; }
+function render(st){
+  var n=st.total, c=st.counts, d=st.dwell;
+  var h='';
+  h+=kpi('Conteneurs',n.toLocaleString('fr'),'périmètre filtré','#3a6ea5');
+  h+=kpi('Import',c.import.toLocaleString('fr'),pct(c.import,n),'#4a90c0');
+  h+=kpi('Export',c.export.toLocaleString('fr'),pct(c.export,n),'#2bb3a3');
+  h+=kpi('En parc',c.storage.toLocaleString('fr'),pct(c.storage,n),'#7a5cc0');
+  h+=kpi('Plein',c.full.toLocaleString('fr'),pct(c.full,n),'#4a9c56');
+  h+=kpi('Vide',c.empty.toLocaleString('fr'),pct(c.empty,n),'#c9822e');
+  h+=kpi('Reefers',c.reefer.toLocaleString('fr'),'','#2bb3a3');
+  h+=kpi('Dangereux',c.haz.toLocaleString('fr'),'IMDG','#c14b52');
+  h+=kpi('Hors gabarit',c.oog.toLocaleString('fr'),'OOG','#c9822e');
+  h+=kpi('Bloqués navire',c.stopvsl.toLocaleString('fr'),'','#c14b52');
+  h+=kpi('Bloqués route',c.stoproad.toLocaleString('fr'),'','#c14b52');
+  if(d){ h+=kpi('Dwell médian',Math.round(d.med)+' j','p90 '+Math.round(d.p90)+' · max '+Math.round(d.max),'#3a6ea5');
+         h+=kpi('Aging > '+META.aging+'j',d.aging.toLocaleString('fr'),pct(d.aging,n),'#c14b52'); }
+  $('kpis').innerHTML=h;
+
+  var ch=$('charts');
+  ch.innerHTML=card('Répartition par catégorie','','ch_cat')+card('Top 10 armateurs','','ch_line')+
+    card('Plein vs Vide','','ch_fk')+card('Top 10 POD','','ch_pod')+
+    '<div class="card full"><h3>Distribution du temps de séjour (Dwell) <span>en jours</span></h3><canvas id="ch_dwell"></canvas></div>'+
+    card('État de transit','','ch_ts')+card('Type ISO','','ch_iso');
+  hbar('ch_cat',arr(st.byCategory)); hbar('ch_line',arr(st.byLine)); donut('ch_fk',arr(st.byFreight));
+  hbar('ch_pod',arr(st.byPOD)); dwellHisto('ch_dwell',d); hbar('ch_ts',arr(st.byTState)); hbar('ch_iso',arr(st.byISO));
+}
+function arr(pairs){ return (pairs||[]).map(function(p){return {label:p[0],value:p[1]};}); }
+function card(t,s,id){ return '<div class="card"><h3>'+t+(s?' <span>'+s+'</span>':'')+'</h3><canvas id="'+id+'"></canvas></div>'; }
+
+/* ---------- charts canvas ---------- */
+function setup(id,h){ var cv=$(id); if(!cv) return null; var dpr=window.devicePixelRatio||1,w=cv.clientWidth||600;
+  cv.width=w*dpr; cv.height=h*dpr; cv.style.height=h+'px'; var x=cv.getContext('2d'); x.scale(dpr,dpr); x.clearRect(0,0,w,h); return {x:x,w:w,h:h}; }
+function hbar(id,data){ var H=Math.max(110,data.length*28+16),s=setup(id,H); if(!s) return; var x=s.x,w=s.w;
+  if(!data.length){ x.fillStyle='#93a4b3'; x.fillText('aucune donnée',10,20); return; }
+  var max=Math.max.apply(null,data.map(function(d){return d.value;}).concat([1]));
+  var labelW=Math.min(150,Math.max.apply(null,data.map(function(d){return d.label.length;}).concat([4]))*6.2+10);
+  var bx=labelW+6,bw=w-bx-60; x.font='12px Segoe UI'; x.textBaseline='middle';
+  data.forEach(function(d,i){ var rh=(H-14)/data.length,bh=Math.min(22,rh-6),y=8+i*rh+(rh-bh)/2;
+    x.fillStyle='#93a4b3'; x.textAlign='right'; x.fillText(d.label.length>24?d.label.slice(0,23)+'…':d.label,labelW,y+bh/2);
+    x.fillStyle='#233241'; x.fillRect(bx,y,bw,bh); x.fillStyle=COLORS[i%COLORS.length]; x.fillRect(bx,y,Math.max(2,bw*d.value/max),bh);
+    x.fillStyle='#e8eef4'; x.textAlign='left'; x.fillText(d.value.toLocaleString('fr'),bx+bw+6,y+bh/2); }); }
+function donut(id,data){ var H=220,s=setup(id,H); if(!s) return; var x=s.x,w=s.w;
+  var tot=data.reduce(function(a,b){return a+b.value;},0)||1,cx=w*0.62,cy=H/2,r=Math.min(w*0.7,H)/2-14,ir=r*0.58,a=-Math.PI/2;
+  data.forEach(function(d,i){ var an=d.value/tot*Math.PI*2; x.beginPath(); x.moveTo(cx,cy); x.fillStyle=COLORS[i%COLORS.length]; x.arc(cx,cy,r,a,a+an); x.closePath(); x.fill(); a+=an; });
+  x.fillStyle='#16212c'; x.beginPath(); x.arc(cx,cy,ir,0,7); x.fill();
+  x.fillStyle='#e8eef4'; x.textAlign='center'; x.textBaseline='middle'; x.font='700 20px Segoe UI'; x.fillText(tot.toLocaleString('fr'),cx,cy-6);
+  x.fillStyle='#93a4b3'; x.font='11px Segoe UI'; x.fillText('total',cx,cy+12);
+  var ly=10; x.textAlign='left'; x.textBaseline='top';
+  data.forEach(function(d,i){ x.fillStyle=COLORS[i%COLORS.length]; x.fillRect(8,ly,10,10); x.fillStyle='#c9d5df'; x.font='11px Segoe UI'; x.fillText(d.label+' — '+Math.round(d.value*100/tot)+'%',22,ly); ly+=16; }); }
+function dwellHisto(id,d){ var H=200,s=setup(id,H); if(!s) return; var x=s.x,w=s.w;
+  if(!d){ x.fillStyle='#93a4b3'; x.fillText('Dwell indisponible',10,20); return; }
+  var labels=['<1j','1-3j','3-7j','7-14j','14-30j','30-60j','60-90j','90-120j','120-180j','>180j'],b=d.hist;
+  var max=Math.max.apply(null,b.concat([1])),pad=34,bw=(w-pad*2)/b.length,base=H-30; x.font='11px Segoe UI'; x.textAlign='center';
+  b.forEach(function(v,i){ var bh=(base-16)*v/max,bx=pad+i*bw; x.fillStyle=COLORS[i%COLORS.length]; x.fillRect(bx+4,base-bh,bw-8,bh);
+    x.fillStyle='#c9d5df'; x.textBaseline='bottom'; x.fillText(v?v.toLocaleString('fr'):'',bx+bw/2,base-bh-2);
+    x.fillStyle='#93a4b3'; x.textBaseline='top'; x.fillText(labels[i],bx+bw/2,base+4); });
+  x.fillStyle='#93a4b3'; x.textAlign='left'; x.textBaseline='top';
+  x.fillText('médiane '+Math.round(d.med)+'j · moyenne '+Math.round(d.avg)+'j · p90 '+Math.round(d.p90)+'j',pad,4); }
+window.addEventListener('resize',function(){ if(META) requestStats(); });
+</script>
+</body>
+</html>

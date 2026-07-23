@@ -1,0 +1,20 @@
+# Secrets — ne JAMAIS committer
+.env
+
+# Donnees operationnelles reelles (conteneurs, clients, BL) — ne pas publier
+cache.xml
+response.xml
+*.xls
+*.xlsx
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Divers
+.DS_Store
+Thumbs.db
+
+# URL interne reelle (redondant, non publie)
+api.txt
