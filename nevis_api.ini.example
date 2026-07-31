@@ -1,0 +1,26 @@
+[app]
+mode = api_test
+data_dir = data
+unit_api_sample_file = data/unit_api_response.xml
+vessel_api_sample_file = data/vessel_visit_api_response.xml
+move_event_api_sample_file = data/moveEvent_api_response.xml
+
+[api]
+unit_url = http://your-nevis-host/apex/api/query?filtername=units_1&operatorId=MARSA&complexId=MACAS&facilityId=TCC&yardId=TCC
+vessel_visit_url = http://your-nevis-host/apex/api/query?filtername=vesselVisits&operatorId=MARSA&complexId=MACAS&facilityId=TCC&yardId=TCC
+move_event_url = http://your-nevis-host/apex/api/query?filtername=moveHistory&operatorId=MARSA&complexId=MACAS&facilityId=TCC&yardId=TCC
+phase = working
+
+[auth]
+username =
+password =
+
+[performance]
+connect_timeout_seconds = 3
+read_timeout_seconds = 45
+retries = 0
+workers = 1
+cache_ttl_seconds = 300
+stale_cache_minutes = 180
+failure_backoff_seconds = 300
+verify_ssl = true

@@ -1,20 +1,21 @@
-# Secrets — ne JAMAIS committer
+# Local credentials and configuration
 .env
+nevis_api.ini
 
-# Donnees operationnelles reelles (conteneurs, clients, BL) — ne pas publier
-cache.xml
-response.xml
+# Runtime and virtual environment
+.venv/
+.runtime_cache/
+__pycache__/
+*.py[cod]
+versions/
+
+# Operational data snapshots (large and potentially sensitive)
+data/
 *.xls
 *.xlsx
+*.pkl
+*.xml
 
-# Python
-__pycache__/
-*.pyc
-*.pyo
-
-# Divers
+# OS/editor files
 .DS_Store
 Thumbs.db
-
-# URL interne reelle (redondant, non publie)
-api.txt

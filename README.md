@@ -1,69 +1,53 @@
-# Dashboard KPI — Parc Conteneurs Navis N4
+# Nevis Vessel Command Center
 
-Outil de statistiques et de visualisation du parc conteneurs à partir de l'**API Universal Query de Navis N4** (authentification HTTP Basic).
+## Run
 
-Trois interfaces, un même moteur :
-
-| Fichier | Interface | Usage |
-|---|---|---|
-| `kpi_web.py` + `index.html` | **Web** (navigateur, `localhost:8000`) | KPI + graphiques + filtres interactifs. **Recommandé.** |
-| `kpi_gui.py` | Fenêtre Tkinter | Filtres + export Excel, sans navigateur |
-| `kpi_stats.py` | Ligne de commande | Génère un classeur Excel (résumé + graphiques + données) |
-
-## Prérequis
-
-- Python 3.8+
-- `pip install requests openpyxl`
-  (Tkinter est inclus avec Python ; le serveur web n'utilise que la bibliothèque standard.)
-
-## Configuration
-
-```bash
-cp .env.example .env
+```powershell
+python -m pip install -r requirements.txt
+python -m streamlit run dashboard.py
 ```
 
-Puis renseigne dans `.env` :
+## Application mode
 
-```
-N4_USER=ton_identifiant
-N4_PASSWORD=ton_mot_de_passe
-N4_URL=http://SERVEUR:PORT/apex/api/query?filtername=units_1&operatorId=...&complexId=...&facilityId=...&yardId=...
-```
+Mode and the local test-data folder are configured in `nevis_api.ini`:
 
-> `.env` n'est jamais versionné (voir `.gitignore`). Ne le partage pas.
-
-## Lancer
-
-### Interface web (recommandée)
-```bash
-python kpi_web.py
-```
-Le navigateur s'ouvre sur http://localhost:8000. Le serveur fait l'auth + l'appel API côté serveur (pas de souci CORS), met les données en cache (`cache.xml`), puis **le filtre pilote la requête** : le navigateur envoie les critères, le serveur renvoie uniquement les KPI et les agrégats des graphiques.
-
-### Export Excel (CLI)
-```bash
-python kpi_stats.py                 # lit .env, appelle l'API, génère un .xlsx
-python kpi_stats.py --in fichier.xml  # hors ligne, à partir d'un export XML
+```ini
+[app]
+mode = api_test
+data_dir = data
+unit_api_sample_file = data/unit_api_response.xml
+vessel_api_sample_file = data/vessel_visit_api_response.xml
 ```
 
-### Fenêtre Tkinter
-```bash
-python kpi_gui.py
+Use `mode = api_test` for the saved Unit and Vessel Visit API XML responses.
+Use `mode = test` for the Excel files stored in the project's `data` folder.
+Use `mode = live` for the Nevis APIs.
+
+## Live API configuration
+
+Edit `nevis_api.ini` and enter the Nevis Basic Auth username and password:
+
+```ini
+[auth]
+username = YOUR_USERNAME
+password = YOUR_PASSWORD
 ```
 
-## Indicateurs
+The supplied configuration starts in `api_test` mode. Change `[app] mode` to
+`live` after the API request has been validated.
 
-Catégorie (import / export / storage), plein / vide, top armateurs, top POD,
-reefers, dangereux (IMDG), hors gabarit, blocages navire / route, et
-**temps de séjour (Dwell, en jours)** : médiane, p90, aging, histogramme.
+- Vessel visits are fetched from the `vesselVisits` query.
+- Only units linked to the returned working visits are fetched from `units_1`.
+- Unit queries run one at a time to protect the Nevis load balancer.
+- Automatic HTTP retries are disabled.
+- Successful responses are cached for five minutes.
+- After one API failure, a five-minute circuit breaker prevents repeated calls.
+- A local safety snapshot is used temporarily if Nevis becomes unavailable.
+- If no live snapshot exists yet, the Excel test snapshot keeps the interface open.
 
-Filtres : période (Last Move / EC-In Time / Complex InTime), catégorie,
-armateur, plein-vide, états, POD, reefer, dangereux, dwell minimum, n° conteneur.
+Configuration values can be overridden with environment variables such as
+`NEVIS_API_USERNAME`, `NEVIS_API_PASSWORD`, `NEVIS_UNIT_API_URL`, and
+`NEVIS_VESSEL_VISIT_API_URL`.
 
-## Note sur le filtrage N4
-
-L'endpoint `/apex/api/query?filtername=units_1` filtre selon un **filtre sauvegardé N4**
-(les paramètres `operatorId/complexId/facilityId/yardId` sont des coordonnées de *scope*,
-pas des filtres de données). Pour filtrer à la source, créer des filtres sauvegardés
-dédiés dans N4 (`units_empty`, `units_export`…) et changer `filtername`. Le filtrage fin
-se fait sinon côté serveur local, instantanément.
+The `[app]` section of `nevis_api.ini` is authoritative for mode and test-data
+location, so no command-line mode variable is required.
